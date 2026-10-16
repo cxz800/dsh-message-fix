@@ -168,6 +168,31 @@ POST /message-fix/api/apply
 - 逻辑 smoke（`test/smoke.mjs`，fake DOM）：模块信封、inject 名单、apply、fiber 形状、fork→prompt→open→archive 调用序列全部通过。
 - 待 GUI 实测：按钮注入视觉对齐（M5）、编辑态交互（M6）、端到端切换与列表表现（M7）、fork closer 的 UI 呈现（R5）。
 
+### 实现记录（2026-10-16 续）：切点算法 v2 与残留轮次修复
+
+GUI 实测反馈：编辑提交后新会话中，修改的输入上方出现"已完成，用时 x 秒"的空轮次 —— 是上一轮
+`turn/start + step/start` 被复制进前缀后由 fork closer 关闭的残留半截轮次（R5 实测命中）。
+
+**根因**：v1 切点 `anchorSeq - 1` 落在上一轮的 `step/start` 之后，留下开放轮次。
+
+**关键结构发现**（对真实日志 `session-57eebe7e` 的分析）：step 是高频闭合单元
+（`step/start` = `step/end` 严格配对 163:163），turn 是大粒度分界（972 事件的会话仅 2 对
+turn/start/end）。因此 v2 算法 = 从 `anchorSeq` 往前扫描，**遇到的第一个 `turn/end` 或
+`step/end` 即切其后**（离目标最近的闭合边界；往前扫描保证 seq 最大、不误切历史）：
+
+| 场景 | basis | 效果 |
+|---|---|---|
+| 上轮原生闭合后首条消息 | `turn-end` | 前缀轮次原生完整，零残留 |
+| 跨 step 编辑（同轮次内） | `step-end` | 最后一个 step 完整；开放 turn 由 fork closer 关闭，轮次内含完整上一轮内容，呈现与官方分支一致 |
+| 第一个轮次内第一条消息 | `first-turn-start` | 前缀只剩会话设置区 |
+
+全量真实日志验证（161 条用户消息）：0 失败、0 fallback；切点距目标消息 2–15 个事件
+（主流 5–6 = `turn/start`+`step/start`+注入），无历史误切。
+
+实现：宿主新增只读端点 `GET /message-fix/api/cutpoint?sessionId&anchorSeq`（依赖 `sessionQuery`
+服务读冷会话事件流，并校验 anchorSeq 处为 `user/message`）；客户端 fork 前先查，查询失败回退
+v1 兜底切点。宿主半边不再"仅诊断"，承担唯一宿主必须做的事：读事件类型。
+
 ## 7. 风险与待确认项
 
 | # | 风险/待确认 | 影响 | 对策 |

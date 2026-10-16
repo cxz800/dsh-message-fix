@@ -245,8 +245,19 @@ window.__ModuleLoader__.load({ id: "dsh-message-fix", factory: (require) => {
     try {
       const sessions = ctxRef.get("sessions");
       if (!sessions || typeof sessions.fork !== "function") throw new Error("sessions 服务不可用");
-      // 切到目标消息事件之前（atSeq 为包含切点；anchorSeq 为目标消息主事件序号）
-      const childId = await sessions.fork({ sessionId, atSeq: anchorSeq - 1, increaseTitle: false });
+      // 切点：优先问宿主（前移到最近一个完整轮次结束，避免残留上一轮的半截轮次），
+      // 失败则回退到目标消息前一个事件（合法 open cut，由 fork closer 关闭）。
+      let atSeq = anchorSeq - 1;
+      try {
+        const res = await fetch(`/message-fix/api/cutpoint?sessionId=${encodeURIComponent(sessionId)}&anchorSeq=${anchorSeq}`);
+        if (res.ok) {
+          const data = await res.json();
+          if (data && data.ok && Number.isSafeInteger(data.atSeq)) atSeq = data.atSeq;
+        }
+      } catch (cutpointError) {
+        console.warn("[message-fix] cutpoint 查询失败，使用兜底切点:", cutpointError);
+      }
+      const childId = await sessions.fork({ sessionId, atSeq, increaseTitle: false });
       // mode 必填且只能为 "queue" | "steer"（typert wire schema 严格校验），与官方 composer send 一致用 "queue"
       const promptResult = await sessions.using(childId, { source: "message-fix" }, (reference) =>
         reference.binding.session.prompt([{ type: "text", text }], "queue", undefined, requestId));
