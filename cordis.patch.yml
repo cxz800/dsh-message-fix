@@ -1,0 +1,5 @@
+# dsh-message-fix bundle patch: mounts the plugin into a profile.
+- insert:
+    - id: message-fix
+      name: dsh-message-fix
+      config: {}
