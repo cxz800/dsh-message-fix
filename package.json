@@ -1,7 +1,7 @@
 {
   "name": "dsh-message-fix",
-  "description": "TODO: 一句话功能描述（待定）。· DeepSeek Harness 插件。",
-  "version": "0.1.0",
+  "description": "修改已发送给大模型的消息：原位编辑后自动 fork → 重新回答 → 无感切换 → 归档旧会话，感受上就是消息被就地修改了。· DSH 插件。",
+  "version": "0.1.1",
   "type": "module",
   "main": "index.js",
   "exports": {

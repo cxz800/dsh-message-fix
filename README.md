@@ -1,45 +1,97 @@
 # dsh-message-fix
 
-DeepSeek Harness 插件：**修改已发送给大模型的消息**。在用户消息动作行（"复制"按钮右侧）注入"编辑"按钮，原位编辑后自动完成 fork → 重新提问 → 无感切换 → 归档旧会话，感受上就是消息被就地修改了。
+DeepSeek Harness 插件：**修改已发送给大模型的消息**。
 
-设计文档见 [docs/design.md](docs/design.md)。
+<div>
+当前版本 <b>0.1.1</b> · 适配 DSH 0.2.0-rc.2 · <a href="docs/design.md">设计文档</a>
+</div>
 
-## 使用
+## 解决什么问题
 
-1. hover 任意已发送的用户消息，点下方动作行"复制"右侧的**编辑**（铅笔）按钮。
-2. 消息原位变为编辑框（预填原文），右下角「取消 / 发送」，**回车直接发送**，Esc 取消。
-3. 提交后：fork 到该消息之前 → 以新文本触发回答 → 界面无感切到新会话 → 旧会话自动归档（日志保留在磁盘，可恢复）。
+给模型发消息后发现写错了（比如"我今天想吃饭"想改成"我今天想喝水"），原生只有两条路，都不理想：
 
-## 安装（本地开发）
+| 原生方式 | 代价 |
+|---|---|
+| 在同一对话里补发一条更正消息 | 上下文里留下"错话 + 更正"，干扰模型思考 |
+| 手动 fork 到消息之前重新输入 | 要先 fork、再重输，还得回到原对话归档/删除旧会话 |
+
+本插件提供第三条路：**在界面上直接修改已发送的消息**。点一下编辑按钮、改完回车，后台自动完成：
+
+1. **fork** 会话到这条消息之前（切点自动对齐到最近的完整轮次边界，不残留半截轮次）
+2. 用修改后的文本**触发模型重新回答**
+3. 界面**无感切换**到 fork 出的新会话（全程只看到一个对话）
+4. 旧会话自动**归档**（日志保留在磁盘，可随时恢复）
+
+你的感受就是：那条消息被"就地修改"了，上下文干净、会话列表不乱。
+
+## 安装
+
+### 方式一：桌面版（Electron App，推荐）
+
+1. 打开 DeepSeek Harness 桌面版
+2. 侧栏 → **插件** 页 → 安装
+3. 填入本地路径：
+   ```
+   /Users/cxz800/work/dsh_plugin/dsh-message-fix
+   ```
+4. 重载后生效（本地路径为 link 安装，之后改插件代码只需重载插件或重启 App，无需重装）
+
+### 方式二：Web profile（浏览器访问的 web GUI）
 
 ```sh
 dsh plugin --profile web add /Users/cxz800/work/dsh_plugin/dsh-message-fix
 ```
 
-重启 DSH（或启用 HMR 后自动重载）。验证链路：`GET /message-fix/api/health`。
+重启 DSH（或启用 HMR 后自动重载）。
 
-## 实现
+### 验证
 
-- **纯客户端实现**：`client/client.js` 全程走官方 API——`sessions.fork({sessionId, atSeq})`（与内置"分支"按钮同构，仅切点为 `anchorSeq - 1`，即目标消息主事件之前）、`session.prompt`、`uiWorkspace.openSession`、`uiWorkspace.archiveSession`（顺序：先切换后归档，因归档主会话会清空主视图）。
-- **宿主半边**（`index.js`）：仅 `GET /message-fix/api/health` 诊断路由。
-- **按钮注入**：`MutationObserver` 监听 `div[data-clock="start"]`（用户消息动作行的语义属性），插入原生按钮；点击后沿 React fiber（`__reactFiber$`）向上读 `props.node`（`anchorSeq`、`data.content`）与 `props.sessionId`。
-- **编辑态**：原生 DOM（隐藏气泡 + 插入编辑容器），不侵入 React 组件树。
+浏览器/DevTools 访问 `GET /message-fix/api/health` 返回 `{"ok":true,...}` 即链路正常；设置页会出现 **Message Fix** 分区。
 
-## HTTP API
+## 使用
 
-| 路由 | 说明 |
-|---|---|
-| `GET /message-fix/api/health` | 存活检查（诊断用） |
+1. 鼠标悬停在任意**你发过的消息**上，消息下方动作行中"复制"按钮右侧会出现**编辑**（铅笔）按钮。
+2. 点击后消息原位变为编辑框（预填原文）：
+   - 右下角「取消 / 发送」按钮
+   - **回车直接发送**，Shift+回车换行，Esc 取消
+   - 编辑历史中间消息时会提示"其后的回答将被丢弃"
+3. 提交后无需任何操作：自动 fork → 重新回答 → 无感切换 → 归档旧会话。
+4. 想找回旧版本对话？在会话列表中解除归档即可（旧会话日志完整保留在 `~/.dsh/sessions/`）。
+
+## 版本说明
+
+### 0.1.1（2026-10-16）
+
+修复 GUI 实测发现的三个问题：
+
+- **消息内容读取**：消息 content 实为 blocks 数组而非字符串，按官方 `contentParts` 语义提取纯文本；含图片/附件的消息明确提示不支持编辑
+- **prompt 被网关拒绝**：typert wire schema 中 `mode` 为必填枚举（`queue`/`steer`），补传 `"queue"` 与官方发送行为一致
+- **残留半截轮次**：切点算法 v2 —— fork 切点从"消息前一个事件"升级为"最近的闭合边界"（`turn/end` 或 `step/end`），消除修改后上方出现的"已完成，用时 x 秒"空轮次；新增宿主只读端点 `GET /message-fix/api/cutpoint`，已对 161 条真实消息全量验证
+
+### 0.1.0（2026-10-16）
+
+初始版本：
+
+- 编辑按钮注入用户消息动作行（复制右侧），原位编辑态（取消/发送/回车/Esc）
+- 提交链路：fork（按事件前缀）→ prompt 重新回答 → 无感切换 → 归档旧会话
+- 纯客户端执行官方 API（`sessions.fork` / `session.prompt` / `uiWorkspace.openSession` / `archiveSession`）
+- 设计文档（含架构演进与切点算法分析）、fake DOM 逻辑 smoke 测试
+
+## 实现说明
+
+- **纯客户端执行**：fork/prompt/切换/归档全程走官方 API，与内置"分支"按钮同构；宿主半边只承担浏览器读不到的事（事件类型读取，用于切点计算）与诊断路由。
+- **按钮注入**：`MutationObserver` 监听用户消息动作行（`data-clock="start"` 语义属性）插入原生按钮；点击后沿 React fiber 读取消息节点（`anchorSeq`、`content`）与会话身份。
+- **切点计算**：宿主读会话事件流，从目标消息往前找最近的 `turn/end`/`step/end`（真实日志中 step 严格配对闭合、turn 稀疏闭合），保证 fork 前缀以完整内容结束。
 
 ## 已知限制
 
-- 编辑按钮依赖消息动作行的 `data-clock="start"` 属性（DSH 内部语义属性，相对稳定）。DSH 升级若失效，按钮安静消失，不影响原功能；届时按新结构适配即可。
-- 消息注入（`<system-reminder>` 等）与用户气泡同属 `user/message` 事件流；切点取目标消息主事件之前，注入由新会话重新生成，不影响语义。
-- 会话正在回答时提交：fork 会以 `forked` 原因关闭开放轮次（官方机制），行为安全但建议等回答结束再编辑。
+- 编辑按钮依赖消息动作行的 `data-clock="start"` 属性（DSH 内部语义属性，相对稳定）。DSH 升级若失效，按钮安静消失，不影响原功能。
+- 含图片/附件的消息不支持编辑（附件无法在 fork 中重建）。
+- 会话正在回答时建议等回答结束再编辑（fork 会以 `forked` 原因安全关闭开放轮次）。
 - steering（插话）消息同样会出现编辑按钮，fork 语义相同。
 
 ## 配置
 
 | 字段 | 默认 | 说明 |
 |---|---|---|
-| `routePrefix` | `/message-fix` | health 路由前缀 |
+| `routePrefix` | `/message-fix` | HTTP 路由前缀（health / cutpoint） |

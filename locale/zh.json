@@ -1,6 +1,6 @@
 {
   "meta": {
     "title": "Message Fix",
-    "description": "TODO: 功能描述待定。"
+    "description": "修改已发送给大模型的消息：原位编辑后自动 fork、重新回答、无感切换并归档旧会话。"
   }
 }

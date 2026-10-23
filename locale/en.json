@@ -1,6 +1,6 @@
 {
   "meta": {
     "title": "Message Fix",
-    "description": "TODO: feature description pending."
+    "description": "Edit a message already sent to the model: edit in place, then the plugin forks, re-asks, switches seamlessly, and archives the old session."
   }
 }
